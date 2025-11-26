@@ -315,7 +315,9 @@ st.sidebar.title("🔍 設定・検索")
 
 # APIキー設定
 with st.sidebar.expander("🤖 AIカテゴリ設定 (Gemini API)"):
-    api_key = st.text_input("API Keyを入力", type="password", help="カテゴリ精度向上のために使用します")
+    # デフォルト値を設定して隠す
+    DEFAULT_API_KEY = "AIzaSyCc-6JTVoHwkyoT071WBVVXd_F_6I5yA84"
+    api_key = st.text_input("API Key", value=DEFAULT_API_KEY, type="password", help="カテゴリ精度向上のために使用します")
     
 sort_order = st.sidebar.radio("並び順", ["新しい順", "古い順"], horizontal=True)
 
