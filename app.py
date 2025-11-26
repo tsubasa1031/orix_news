@@ -54,13 +54,20 @@ def load_data():
                 items = soup.find_all("item")
                 
                 for item in items:
+                    title = item.title.text
+                    
+                    # --- フィルタリング強化: 他球団情報の除外 ---
+                    # タイトルに「オリックス」または「バファローズ」が含まれていない場合はスキップ
+                    # (Google Newsは関連性の低い記事も拾うことがあるため、ここで厳密に判定します)
+                    if "オリックス" not in title and "バファローズ" not in title:
+                        continue
+
                     link = item.link.text
                     
                     if link in seen_links:
                         continue
                     seen_links.add(link)
 
-                    title = item.title.text
                     pub_date_str = item.pubDate.text
                     description = item.description.text
                     
