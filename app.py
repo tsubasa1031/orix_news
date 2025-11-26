@@ -309,7 +309,8 @@ def load_data():
     return df
 
 # --- アプリケーション状態の管理 ---
-if 'news_df' not in st.session_state:
+# データの再読み込みチェック: 'tags' カラムがない場合（古いデータ形式）は強制的にリロード
+if 'news_df' not in st.session_state or 'tags' not in st.session_state.news_df.columns:
     st.session_state.news_df = load_data()
 
 # サイドバー設定
@@ -353,8 +354,13 @@ else:
 if not df.empty:
     # 全タグのリストを作成
     all_tags = []
+    # ここでエラーになるのを防ぐため、tagsカラムが存在することを保証済み
     for tags in df['tags']:
-        all_tags.extend(tags)
+        if isinstance(tags, list):
+            all_tags.extend(tags)
+        else:
+            # 万が一リストでない場合（古いキャッシュなど）の安全策
+            all_tags.append(str(tags))
     
     # 出現回数順にソートしてユニーク化
     tag_counts = Counter(all_tags)
@@ -369,7 +375,7 @@ if not df.empty:
     # フィルタリングロジック
     if selected_tags:
         # 選択されたタグのいずれかを含んでいる行を抽出
-        df = df[df['tags'].apply(lambda x: any(tag in x for tag in selected_tags))]
+        df = df[df['tags'].apply(lambda x: any(tag in x for tag in selected_tags) if isinstance(x, list) else False)]
     
     if search_query:
         df = df[df["title"].str.contains(search_query, case=False)]
@@ -383,7 +389,7 @@ st.markdown("---")
 
 if not df.empty:
     for index, row in df.iterrows():
-        tags = row['tags']
+        tags = row['tags'] if isinstance(row['tags'], list) else []
         link_url = row['link']
         
         # タグのHTML生成
