@@ -228,6 +228,7 @@ def load_data():
     
     with st.spinner('ニュースを収集中...'):
         for query in search_queries:
+            # 修正: URLの生成部分から不要なMarkdown記述を削除
             url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){query}&hl=ja&gl=JP&ceid=JP:ja"
             
             try:
