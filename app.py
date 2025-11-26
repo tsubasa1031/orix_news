@@ -226,13 +226,21 @@ def load_data():
     all_news_list = []
     seen_links = set()
     
+    # User-Agentを設定してブラウザからのアクセスに見せる
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     with st.spinner('ニュースを収集中...'):
         for query in search_queries:
-            # 修正: URLの生成部分から不要なMarkdown記述を削除
+            # URLエンコーディング対策として requests の params を使用するか、
+            # 確実に動作させるために文字列構築時に注意する。
+            # ここではシンプルにf-stringで構築するが、User-Agentが重要。
             url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){query}&hl=ja&gl=JP&ceid=JP:ja"
             
             try:
-                response = requests.get(url, timeout=10)
+                # headersを追加
+                response = requests.get(url, headers=headers, timeout=10)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.content, "xml")
@@ -286,10 +294,11 @@ def load_data():
 
             except Exception as e:
                 print(f"Query '{query}' failed: {e}")
+                # st.error(f"エラー: {e}") # UIが崩れるのでログのみ
                 continue
 
     if not all_news_list:
-        return pd.DataFrame([{"timestamp": pd.Timestamp.now(), "date": "-", "tags": ["Error"], "media": "-", "title": "データ取得エラー", "link": "#"}])
+        return pd.DataFrame([{"timestamp": pd.Timestamp.now(), "date": "-", "tags": ["Error"], "media": "System", "title": "データ取得エラー: 再読み込みしてください", "link": "#"}])
 
     df = pd.DataFrame(all_news_list)
     df = df.sort_values("timestamp", ascending=False).reset_index(drop=True)
@@ -334,11 +343,15 @@ with col2:
     if HAS_GENAI and API_KEY:
         if st.button("✨ AIでタグ付け詳細化"):
             if not st.session_state.news_df.empty:
-                with st.spinner("AIがタイトルを分析して詳細なタグを生成中..."):
-                    updated_df = tag_batch_with_ai(st.session_state.news_df.copy(), API_KEY)
-                    st.session_state.news_df = updated_df
-                    st.success("タグの生成が完了しました！")
-                    st.rerun()
+                # エラー行が含まれている場合は実行しない
+                if "Error" in st.session_state.news_df.iloc[0]["tags"]:
+                     st.error("有効なニュースデータがありません。")
+                else:
+                    with st.spinner("AIがタイトルを分析して詳細なタグを生成中..."):
+                        updated_df = tag_batch_with_ai(st.session_state.news_df.copy(), API_KEY)
+                        st.session_state.news_df = updated_df
+                        st.success("タグの生成が完了しました！")
+                        st.rerun()
     elif not HAS_GENAI:
         st.error("google-generativeai ライブラリが必要です")
 
