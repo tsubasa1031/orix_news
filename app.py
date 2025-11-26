@@ -7,6 +7,7 @@ import time
 import difflib
 import re
 import json
+from collections import Counter
 
 # --- 追加: Google Generative AI ライブラリ ---
 try:
@@ -40,25 +41,43 @@ st.markdown("""
     .news-header {
         display: flex;
         justify-content: space-between;
-        align-items: baseline;
+        align-items: flex-start;
         margin-bottom: 0.5rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
-    .news-category {
+    .tags-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+    }
+    .news-tag {
         display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 4px;
-        font-size: 0.8rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
         font-weight: bold;
-        color: white;
-        margin-right: 0.5rem;
+        color: #333;
+        background-color: #f0f0f0;
+        border: 1px solid #ddd;
     }
+    /* 特定のキーワードを含むタグの色分け */
+    .tag-contract { background-color: #ffebee; color: #c62828; border-color: #ef9a9a; }
+    .tag-transfer { background-color: #fce4ec; color: #880e4f; border-color: #f48fb1; }
+    .tag-draft { background-color: #f3e5f5; color: #4a148c; border-color: #ce93d8; }
+    .tag-game { background-color: #e1f5fe; color: #01579b; border-color: #81d4fa; }
+    .tag-camp { background-color: #e8f5e9; color: #1b5e20; border-color: #a5d6a7; }
+    .tag-award { background-color: #fffde7; color: #f57f17; border-color: #fff59d; }
+    .tag-injury { background-color: #fff3e0; color: #e65100; border-color: #ffcc80; }
+    
     .news-title {
         font-size: 1.15rem;
         font-weight: bold;
         color: #333;
         text-decoration: none;
         display: block;
-        margin-bottom: 0.2rem;
+        margin-top: 0.3rem;
+        line-height: 1.4;
     }
     .news-title:hover {
         color: #1f77b4;
@@ -67,58 +86,65 @@ st.markdown("""
     .news-meta {
         font-size: 0.8rem;
         color: #777;
+        margin-top: 0.3rem;
     }
-    
-    /* カテゴリ別の色定義 */
-    .cat-contract { background-color: #d32f2f; }      /* 赤: 契約更改 */
-    .cat-transfer { background-color: #c2185b; }      /* ピンク: 移籍/退団 */
-    .cat-draft { background-color: #7b1fa2; }         /* 紫: ドラフト/新人 */
-    .cat-award { background-color: #fbc02d; color: #333 !important; } /* 金: タイトル */
-    .cat-camp { background-color: #388e3c; }          /* 緑: キャンプ/練習 */
-    .cat-game { background-color: #0288d1; }          /* 水色: 試合 */
-    .cat-event { background-color: #1976d2; }         /* 青: 球団/イベント */
-    .cat-injury { background-color: #f57c00; }        /* オレンジ: 怪我 */
-    .cat-other { background-color: #757575; }         /* グレー */
 
     @media (prefers-color-scheme: dark) {
         .news-card {
             background-color: #262730;
             border-color: #444;
         }
-        .news-title {
-            color: #eee;
-        }
-        .news-title:hover {
-            color: #64b5f6;
-        }
-        .news-meta {
-            color: #aaa;
-        }
-        .cat-award { color: #000 !important; }
+        .news-title { color: #eee; }
+        .news-title:hover { color: #64b5f6; }
+        .news-meta { color: #aaa; }
+        .news-tag { background-color: #444; color: #ddd; border-color: #555; }
+        /* ダークモード時のタグ色（少し暗めに） */
+        .tag-contract { background-color: #5c1b1b; color: #ffcdd2; border-color: #ef5350; }
+        .tag-transfer { background-color: #4a1428; color: #f8bbd0; border-color: #ec407a; }
+        .tag-draft { background-color: #3a1c42; color: #e1bee7; border-color: #ab47bc; }
+        .tag-game { background-color: #1a3b4d; color: #b3e5fc; border-color: #29b6f6; }
+        .tag-camp { background-color: #1b3e20; color: #c8e6c9; border-color: #66bb6a; }
+        .tag-award { background-color: #4a3b0a; color: #fff9c4; border-color: #ffee58; }
+        .tag-injury { background-color: #4e2c0c; color: #ffe0b2; border-color: #ffa726; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. 標準機能によるカテゴリ判定 (初期表示用・APIなし用) ---
-def assign_category_simple(text):
-    text = text.replace(" ", "")
-    # 簡易版カテゴリ定義
+# --- 1. 標準機能によるタグ生成 (APIなし用) ---
+def generate_tags_simple(text):
+    text_clean = text.replace(" ", "")
+    tags = []
+    
+    # カテゴリ判定ロジック
     categories = [
+        {"name": "契約更改", "keywords": ["契約更改", "更改", "年俸", "サイン", "現状維持", "アップ", "ダウン", "保留"]},
+        {"name": "移籍・退団", "keywords": ["移籍", "FA", "トレード", "退団", "戦力外", "自由契約", "ポスティング", "新外国人"]},
+        {"name": "ドラフト・新人", "keywords": ["ドラフト", "指名", "入団", "新人", "ルーキー"]},
+        {"name": "怪我・調整", "keywords": ["怪我", "故障", "手術", "離脱", "リハビリ", "痛", "違和感", "病院", "抹消"]},
+        {"name": "キャンプ・練習", "keywords": ["キャンプ", "自主トレ", "練習", "ブルペン", "始動", "紅白戦"]},
         {"name": "タイトル受賞", "keywords": ["ベストナイン", "ゴールデングラブ", "表彰", "受賞", "MVP", "新人王"]},
-        {"name": "契約・移籍", "keywords": ["契約更改", "更改", "移籍", "FA", "トレード", "退団", "戦力外", "ドラフト", "獲得", "年俸", "サイン", "残留", "万円", "億円"]},
-        {"name": "怪我・調整", "keywords": ["怪我", "故障", "手術", "離脱", "リハビリ", "痛", "違和感", "病院"]},
-        {"name": "キャンプ・練習", "keywords": ["キャンプ", "自主トレ", "練習", "ブルペン", "始動"]},
-        {"name": "球団・イベント", "keywords": ["ファン感", "イベント", "ユニフォーム", "ロゴ", "チケット", "人事", "コーチ"]}
+        {"name": "球団情報", "keywords": ["ファン感", "イベント", "ユニフォーム", "ロゴ", "チケット", "人事", "コーチ"]}
     ]
+    
     for cat in categories:
-        if any(word in text for word in cat["keywords"]):
-            return cat["name"]
-    return "その他"
+        if any(word in text_clean for word in cat["keywords"]):
+            tags.append(cat["name"])
+            
+    # 簡易的な選手名抽出 (代表的な選手のみ)
+    famous_players = ["中嶋", "岸田", "宮城", "紅林", "山下", "吉田", "森友哉", "若月", "頓宮", "杉本", "平野", "山崎", "宇田川", "東", "曽谷"]
+    for player in famous_players:
+        if player in text_clean:
+            tags.append(player)
+            
+    if not tags:
+        tags.append("ニュース")
+        
+    return list(set(tags)) # 重複排除
 
-# --- 2. AIによる一括カテゴリ判定 (Gemini API) ---
-def categorize_batch_with_ai(news_df, api_key):
+# --- 2. AIによるタグ生成 (Gemini API) ---
+def tag_batch_with_ai(news_df, api_key):
     """
-    ニュースのタイトルリストを一括でAIに送信し、詳細なカテゴリを判定させる
+    ニュースのタイトルリストを一括でAIに送信し、適切なタグ（選手名、トピックなど）を生成させる
     """
     if not HAS_GENAI:
         st.error("google-generativeai ライブラリがありません。")
@@ -127,68 +153,36 @@ def categorize_batch_with_ai(news_df, api_key):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
 
-    # タイトルとIDのリストを作成
     titles_data = []
     for idx, row in news_df.iterrows():
         titles_data.append({"id": idx, "title": row['title']})
 
-    # バッチサイズ (一度に処理する件数)
-    BATCH_SIZE = 30
+    BATCH_SIZE = 20 # 処理速度と精度のバランス
     
-    # プログレスバー
     progress_bar = st.progress(0)
     
-    # チャンクごとに処理
     for i in range(0, len(titles_data), BATCH_SIZE):
         chunk = titles_data[i:i + BATCH_SIZE]
         
-        # プロンプト作成 (定義を厳格化)
+        # プロンプト: タイトルから複数のタグを抽出させる
         prompt = f"""
-        あなたはプロ野球ニュースの編集者です。
-        以下のJSON形式のニュースタイトルリストを読み、それぞれの記事を最も適切なカテゴリに分類してください。
-        判断に迷う場合は無理に分類せず「その他」を選択してください。
+        あなたはプロ野球ニュースのタグ付け担当です。
+        以下のニュースタイトルのリストから、それぞれの記事に適したタグ（キーワード）を抽出してください。
         
-        【カテゴリ定義と判定基準】
-        1. 契約更改
-           - 対象: 既存選手の来季契約、年俸交渉、サイン、現状維持、アップ、ダウン。
-           - 除外: FA宣言、退団、移籍、新外国人獲得はここには含めない。
+        【抽出ルール】
+        1. **トピックタグ**: 以下のリストから該当するものを1つ以上選んでください。
+           - 契約更改, 移籍・退団, ドラフト・新人, 怪我・調整, キャンプ・練習, タイトル受賞, 試合・結果, 球団情報
+        2. **エンティティタグ**: 記事に登場する具体的な「選手名」「監督名」「相手球団名」を抽出してください（例: 宮城大弥, 岸田監督, 阪神）。
+        3. **詳細タグ**: 具体的な内容があれば短く抽出してください（例: 1000万増, 離脱）。
         
-        2. 移籍・退団
-           - 対象: FA権行使、他球団への移籍、新外国人獲得、戦力外通告、自由契約、退団、ポスティングシステム。
-           - 除外: ドラフト指名はここには含めない。
-        
-        3. ドラフト・新人
-           - 対象: ドラフト会議での指名、指名挨拶、仮契約、新入団選手発表会見、ルーキーの紹介。
-           - 除外: 新外国人選手は「移籍・退団」へ。
-        
-        4. 怪我・調整
-           - 対象: 手術、リハビリ、怪我の診断結果、登録抹消（怪我理由）、コンディション不良、別メニュー調整。
-        
-        5. キャンプ・練習
-           - 対象: 春季/秋季キャンプ、自主トレ公開、ブルペン入り、打撃練習、練習試合、紅白戦。
-           - 除外: 公式戦の試合結果は含めない。
-        
-        6. タイトル受賞
-           - 対象: ベストナイン、ゴールデングラブ、MVP、新人王、月間MVP、各種表彰。
-        
-        7. 試合・結果
-           - 対象: 公式戦、交流戦、CS、日本シリーズの勝敗・スコア・試合経過。
-           - 除外: 練習試合、紅白戦は「キャンプ・練習」へ。
-        
-        8. 球団・イベント
-           - 対象: ユニフォーム発表、ロゴ変更、ファン感謝デー、チケット販売、コーチ就任・退任などの人事、マスコット、グッズ。
-        
-        9. その他
-           - 上記のいずれにも明確に当てはまらないもの。
-        
-        【入力データ】
+        【入力データ (JSON)】
         {json.dumps(chunk, ensure_ascii=False)}
         
         【出力形式】
-        以下のJSONフォーマットのリストのみを出力してください。Markdownのコードブロック(```jsonなど)は含めないでください。
+        以下のJSONフォーマットのリストのみを出力してください。Markdownタグは不要です。
         [
-            {{"id": 0, "category": "契約更改"}},
-            {{"id": 1, "category": "怪我・調整"}}
+            {{"id": 0, "tags": ["宮城大弥", "契約更改", "1億超え"]}},
+            {{"id": 1, "tags": ["山下舜平大", "怪我・調整", "腰痛"]}}
         ]
         """
         
@@ -196,41 +190,27 @@ def categorize_batch_with_ai(news_df, api_key):
             response = model.generate_content(prompt)
             result_text = response.text.strip()
             
-            # Markdownのコードブロックがあれば削除
             if result_text.startswith("```"):
                 result_text = result_text.replace("```json", "").replace("```", "").strip()
             
-            # JSONパース
             results = json.loads(result_text)
             
-            # 結果をDataFrameに反映
             for res in results:
                 idx = res.get("id")
-                category = res.get("category")
-                if idx is not None and category:
-                    # インデックスが存在することを確認して更新
+                tags = res.get("tags")
+                if idx is not None and tags and isinstance(tags, list):
                     if idx in news_df.index:
-                        news_df.at[idx, 'category'] = category
+                        # 既存のタグをAI生成タグで上書き
+                        news_df.at[idx, 'tags'] = tags
                         
         except Exception as e:
             print(f"Batch processing failed: {e}")
-            # エラー時はスキップ（元のカテゴリのまま）
         
-        # 進捗更新
         progress_bar.progress(min((i + BATCH_SIZE) / len(titles_data), 1.0))
-        time.sleep(1) # 安全のため少し待機
+        time.sleep(1)
 
     progress_bar.empty()
     return news_df
-
-def clean_summary(text):
-    soup = BeautifulSoup(text, "html.parser")
-    text = soup.get_text()
-    text = re.sub(r'\s+', ' ', text).strip()
-    text = text.replace("記事を読む", "").replace("Full coverage", "")
-    if len(text) > 100:
-        text = text[:100] + "..."
-    return text
 
 # --- 3. データ取得関数 ---
 @st.cache_data(ttl=1800)
@@ -248,7 +228,7 @@ def load_data():
     
     with st.spinner('ニュースを収集中...'):
         for query in search_queries:
-            url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+            url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){query}&hl=ja&gl=JP&ceid=JP:ja"
             
             try:
                 response = requests.get(url, timeout=10)
@@ -270,7 +250,6 @@ def load_data():
                     seen_links.add(link)
 
                     pub_date_str = item.pubDate.text
-                    
                     try:
                         timestamp = pd.to_datetime(pub_date_str)
                         if timestamp.tzinfo is None:
@@ -290,13 +269,13 @@ def load_data():
                         clean_title = parts[0]
                         source = parts[1]
 
-                    # 初期カテゴリ判定（キーワードベース）
-                    category = assign_category_simple(clean_title)
+                    # 初期タグ生成（キーワードベース）
+                    tags = generate_tags_simple(clean_title)
 
                     all_news_list.append({
                         "timestamp": timestamp_jst,
                         "date": display_date,
-                        "category": category, # 後でAIで上書き可能
+                        "tags": tags, # リスト形式
                         "media": source,
                         "title": clean_title,
                         "link": link,
@@ -309,7 +288,7 @@ def load_data():
                 continue
 
     if not all_news_list:
-        return pd.DataFrame([{"timestamp": pd.Timestamp.now(), "date": "-", "category": "Error", "media": "-", "title": "データ取得エラー", "link": "#"}])
+        return pd.DataFrame([{"timestamp": pd.Timestamp.now(), "date": "-", "tags": ["Error"], "media": "-", "title": "データ取得エラー", "link": "#"}])
 
     df = pd.DataFrame(all_news_list)
     df = df.sort_values("timestamp", ascending=False).reset_index(drop=True)
@@ -336,7 +315,7 @@ if 'news_df' not in st.session_state:
 # サイドバー設定
 st.sidebar.title("🔍 設定・検索")
 
-# APIキーを内部で保持（隠蔽）
+# APIキーを内部で保持
 API_KEY = "AIzaSyCc-6JTVoHwkyoT071WBVVXd_F_6I5yA84"
     
 sort_order = st.sidebar.radio("並び順", ["新しい順", "古い順"], horizontal=True)
@@ -351,13 +330,12 @@ with col1:
 
 with col2:
     if HAS_GENAI and API_KEY:
-        if st.button("✨ AIでカテゴリ細分化"):
+        if st.button("✨ AIでタグ付け詳細化"):
             if not st.session_state.news_df.empty:
-                with st.spinner("AIがタイトルを分析してカテゴリを振り分けています..."):
-                    # データフレームごと渡して更新
-                    updated_df = categorize_batch_with_ai(st.session_state.news_df.copy(), API_KEY)
+                with st.spinner("AIがタイトルを分析して詳細なタグを生成中..."):
+                    updated_df = tag_batch_with_ai(st.session_state.news_df.copy(), API_KEY)
                     st.session_state.news_df = updated_df
-                    st.success("カテゴリの細分化が完了しました！")
+                    st.success("タグの生成が完了しました！")
                     st.rerun()
     elif not HAS_GENAI:
         st.error("google-generativeai ライブラリが必要です")
@@ -373,51 +351,62 @@ else:
 
 # フィルタリング
 if not df.empty:
-    categories = sorted(df["category"].unique())
-    if "その他" in categories:
-        categories.remove("その他")
-        categories.append("その他")
+    # 全タグのリストを作成
+    all_tags = []
+    for tags in df['tags']:
+        all_tags.extend(tags)
+    
+    # 出現回数順にソートしてユニーク化
+    tag_counts = Counter(all_tags)
+    sorted_tags = [tag for tag, count in tag_counts.most_common()]
 
-    selected_categories = st.sidebar.multiselect(
-        "カテゴリで絞り込み", categories, default=categories
+    selected_tags = st.sidebar.multiselect(
+        "タグで絞り込み (選手名、トピックなど)", sorted_tags
     )
     
     search_query = st.sidebar.text_input("キーワード検索")
     
-    filtered_df = df[df["category"].isin(selected_categories)]
+    # フィルタリングロジック
+    if selected_tags:
+        # 選択されたタグのいずれかを含んでいる行を抽出
+        df = df[df['tags'].apply(lambda x: any(tag in x for tag in selected_tags))]
     
     if search_query:
-        filtered_df = filtered_df[
-            filtered_df["title"].str.contains(search_query, case=False)
-        ]
+        df = df[df["title"].str.contains(search_query, case=False)]
 else:
-    filtered_df = df
+    pass
 
 # --- メイン画面 ---
 st.title("⚾ オリックス・バファローズ 最新ニュース")
 st.caption("最新のニュースを自動収集して表示しています")
 st.markdown("---")
 
-if not filtered_df.empty:
-    for index, row in filtered_df.iterrows():
-        # カテゴリに応じたCSSクラス
-        cat_class = "cat-other"
-        cat = row['category']
-        if "契約" in cat or "年俸" in cat: cat_class = "cat-contract"
-        elif "移籍" in cat or "退団" in cat or "FA" in cat: cat_class = "cat-transfer"
-        elif "ドラフト" in cat or "新人" in cat: cat_class = "cat-draft"
-        elif "タイトル" in cat or "表彰" in cat: cat_class = "cat-award"
-        elif "怪我" in cat or "調整" in cat: cat_class = "cat-injury"
-        elif "球団" in cat or "イベント" in cat: cat_class = "cat-event"
-        elif "キャンプ" in cat or "練習" in cat: cat_class = "cat-camp"
-        elif "試合" in cat: cat_class = "cat-game"
-
+if not df.empty:
+    for index, row in df.iterrows():
+        tags = row['tags']
         link_url = row['link']
         
+        # タグのHTML生成
+        tags_html = ""
+        for tag in tags:
+            # タグの内容に応じてクラスを付与
+            tag_class = ""
+            if "契約" in tag or "更改" in tag: tag_class = "tag-contract"
+            elif "移籍" in tag or "退団" in tag: tag_class = "tag-transfer"
+            elif "ドラフト" in tag or "新人" in tag: tag_class = "tag-draft"
+            elif "怪我" in tag or "手術" in tag: tag_class = "tag-injury"
+            elif "キャンプ" in tag or "練習" in tag: tag_class = "tag-camp"
+            elif "タイトル" in tag or "賞" in tag: tag_class = "tag-award"
+            elif "試合" in tag or "勝" in tag or "負" in tag: tag_class = "tag-game"
+            
+            tags_html += f'<span class="news-tag {tag_class}">{tag}</span>'
+
         st.markdown(f"""
         <div class="news-card">
             <div class="news-header">
-                <span class="news-category {cat_class}">{row['category']}</span>
+                <div class="tags-container">
+                    {tags_html}
+                </div>
                 <span class="news-meta">📅 {row['date']} | 🏢 {row['media']}</span>
             </div>
             <a href="{link_url}" target="_blank" class="news-title">{row['title']}</a>
