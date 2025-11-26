@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import datetime
 import time
-import difflib  # テキスト類似度判定に使用
+import difflib
 
 # ページ設定
 st.set_page_config(
@@ -13,9 +13,56 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- カスタムCSS: カード表示のデザイン調整 ---
+st.markdown("""
+    <style>
+    .news-card {
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 1rem;
+        background-color: #ffffff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .news-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #1f77b4;
+        margin-bottom: 0.5rem;
+        text-decoration: none;
+    }
+    .news-meta {
+        font-size: 0.85rem;
+        color: #666;
+        margin-bottom: 0.5rem;
+    }
+    .news-summary {
+        font-size: 0.95rem;
+        color: #333;
+        line-height: 1.5;
+    }
+    /* ダークモード対応 */
+    @media (prefers-color-scheme: dark) {
+        .news-card {
+            background-color: #262730;
+            border-color: #444;
+        }
+        .news-title {
+            color: #64b5f6;
+        }
+        .news-meta {
+            color: #aaa;
+        }
+        .news-summary {
+            color: #eee;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # --- ヘルパー関数: キーワードからカテゴリを判定 ---
 def assign_category(text):
-    text = text.replace(" ", "")  # 空白除去してマッチングしやすくする
+    text = text.replace(" ", "")
     keywords = {
         "契約・移籍": ["契約", "更改", "移籍", "FA", "トレード", "新加入", "退団", "戦力外", "ドラフト", "獲得", "ポスティング", "育成", "支配下", "年俸", "人的補償"],
         "怪我・調整": ["怪我", "故障", "手術", "離脱", "復帰", "調整", "抹消", "登録", "コンディション", "痛", "違和感", "リハビリ"],
@@ -29,9 +76,8 @@ def assign_category(text):
     return "その他ニュース"
 
 # --- 1. データ取得関数 (Google News RSSから取得) ---
-@st.cache_data(ttl=1800)  # 30分間キャッシュしてアクセス負荷を軽減
+@st.cache_data(ttl=1800)
 def load_data():
-    # 情報量を増やすため、複数の切り口で検索を行う
     search_queries = [
         "オリックス+バファローズ",
         "オリックス+契約更改",
@@ -41,9 +87,9 @@ def load_data():
     ]
     
     all_news_list = []
-    seen_links = set() # 重複排除用のセット
+    seen_links = set()
     
-    with st.spinner('複数のソースからニュースを収集中...'):
+    with st.spinner('ニュースを収集中...'):
         for query in search_queries:
             url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
             
@@ -57,12 +103,10 @@ def load_data():
                 for item in items:
                     title = item.title.text
                     
-                    # --- フィルタリング強化: 他球団情報の除外 ---
                     if "オリックス" not in title and "バファローズ" not in title:
                         continue
 
                     link = item.link.text
-                    
                     if link in seen_links:
                         continue
                     seen_links.add(link)
@@ -70,19 +114,27 @@ def load_data():
                     pub_date_str = item.pubDate.text
                     description = item.description.text
                     
-                    # --- 日付処理 ---
+                    # --- 日付処理の修正 (UTC -> JST) ---
                     try:
+                        # まずpandasでパース (Google RSSはGMT/UTC)
                         timestamp = pd.to_datetime(pub_date_str)
-                        if timestamp.tzinfo is not None:
-                            timestamp = timestamp.tz_convert('Asia/Tokyo')
-                        display_date = timestamp.strftime('%Y-%m-%d %H:%M')
+                        
+                        # タイムゾーン情報がない場合はUTCとして扱う
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.tz_localize('UTC')
+                        else:
+                            # 既にある場合はUTCに統一
+                            timestamp = timestamp.tz_convert('UTC')
+                            
+                        # 日本時間(Asia/Tokyo)に変換
+                        timestamp_jst = timestamp.tz_convert('Asia/Tokyo')
+                        display_date = timestamp_jst.strftime('%m/%d %H:%M') # 月/日 時:分
                     except:
-                        timestamp = datetime.datetime.now()
+                        timestamp_jst = pd.Timestamp.now(tz='Asia/Tokyo')
                         display_date = pub_date_str
 
-                    # descriptionのHTML除去と要約作成
                     summary_soup = BeautifulSoup(description, "html.parser")
-                    summary_text = summary_soup.get_text()[:100] + "..." if summary_soup.get_text() else "詳細はありません"
+                    summary_text = summary_soup.get_text()[:120] + "..." if summary_soup.get_text() else "詳細はありません"
 
                     source = "News"
                     clean_title = title
@@ -94,7 +146,7 @@ def load_data():
                     category = assign_category(clean_title + summary_text)
 
                     all_news_list.append({
-                        "timestamp": timestamp,
+                        "timestamp": timestamp_jst,
                         "date": display_date,
                         "category": category,
                         "media": source,
@@ -115,28 +167,18 @@ def load_data():
         ])
 
     df = pd.DataFrame(all_news_list)
-    
-    # --- 時系列ソート ---
-    # まず新しい順に並べる（これで重複除去時に「新しい記事」が優先して残るようになる）
     df = df.sort_values("timestamp", ascending=False).reset_index(drop=True)
     
-    # --- 類似記事の削除（重複排除） ---
-    # タイトル同士の類似度を計算し、似ている記事があれば古い方を削除する
+    # 重複排除
     unique_indices = []
     titles = df["title"].tolist()
-    
     for i in range(len(titles)):
         is_duplicate = False
-        # 既にリストに追加された（＝より新しい）記事と比較
         for j in unique_indices:
-            # SequenceMatcherで類似度（0.0〜1.0）を計算
-            # 閾値0.6: 記事タイトルが6割以上一致していれば「同じ話題」とみなす
             similarity = difflib.SequenceMatcher(None, titles[i], titles[j]).ratio()
-            
             if similarity > 0.6: 
                 is_duplicate = True
                 break
-        
         if not is_duplicate:
             unique_indices.append(i)
     
@@ -146,10 +188,8 @@ def load_data():
 
 df = load_data()
 
-# --- 2. サイドバー (フィルタリング) ---
+# --- 2. サイドバー ---
 st.sidebar.title("🔍 検索フィルター")
-
-# ソート順の切り替え機能を追加
 sort_order = st.sidebar.radio("並び順", ["新しい順", "古い順"], horizontal=True)
 
 if sort_order == "古い順":
@@ -164,12 +204,10 @@ if not df.empty:
         categories.append("その他ニュース")
 
     selected_categories = st.sidebar.multiselect(
-        "トピック（内容）で絞り込み",
-        categories,
-        default=categories
+        "トピック", categories, default=categories
     )
     
-    search_query = st.sidebar.text_input("キーワード検索 (例: 吉田輝星)")
+    search_query = st.sidebar.text_input("キーワード検索")
     
     filtered_df = df[df["category"].isin(selected_categories)]
     
@@ -183,51 +221,48 @@ else:
 
 # --- 3. メイン画面 ---
 st.title("⚾ オリックス・バファローズ 最新ニュース")
-st.caption("Google News RSSより自動収集・分類（複数ソース統合版）")
+st.caption("最新のニュースを自動収集・要約して表示しています")
 
-if st.button("ニュースを更新"):
+if st.button("🔄 ニュースを更新"):
     load_data.clear()
     st.rerun()
 
-st.markdown(f"最新記事: **{len(filtered_df)}** 件")
-
-view_mode = st.radio("表示形式:", ["カード表示", "データテーブル"], horizontal=True)
-st.divider()
+st.markdown("---")
 
 if not filtered_df.empty:
-    if view_mode == "カード表示":
-        for index, row in filtered_df.iterrows():
-            label_prefix = ""
-            if row['category'] == "契約・移籍":
-                label_prefix = "💰"
-            elif row['category'] == "怪我・調整":
-                label_prefix = "🏥"
-            elif row['category'] == "球団・イベント":
-                label_prefix = "🏟️"
-            elif row['category'] == "試合・結果":
-                label_prefix = "⚾"
-            else:
-                label_prefix = "📰"
+    for index, row in filtered_df.iterrows():
+        # カテゴリに応じたアイコン
+        icon = "📰"
+        if row['category'] == "契約・移籍": icon = "💰"
+        elif row['category'] == "怪我・調整": icon = "🏥"
+        elif row['category'] == "球団・イベント": icon = "🏟️"
+        elif row['category'] == "試合・結果": icon = "⚾"
 
-            with st.expander(f"{label_prefix} 【{row['category']}】 {row['title']}", expanded=True):
-                st.caption(f"📅 {row['date']} | 🏢 {row['media']}")
-                st.write(row['summary'])
-                st.link_button("記事を読む 🔗", row['link'])
-                
-    elif view_mode == "データテーブル":
-        st.dataframe(
-            filtered_df,
-            column_config={
-                "date": "日時",
-                "category": "トピック",
-                "media": "メディア",
-                "title": "見出し",
-                "summary": "要約",
-                "link": st.column_config.LinkColumn("リンク", display_text="記事を開く")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        # URLリンク
+        link_url = row['link']
+        
+        # カードレイアウトの表示 (HTML + CSS)
+        # リンクをクリック可能なタイトルとして表示
+        
+        with st.container():
+            col1, col2 = st.columns([1, 15])
+            
+            with col1:
+                st.markdown(f"<div style='font-size: 2rem; text-align: center;'>{icon}</div>", unsafe_allow_html=True)
+            
+            with col2:
+                # 記事カードのHTML生成
+                st.markdown(f"""
+                <div class="news-card">
+                    <div class="news-meta">
+                        <span style="font-weight:bold; color:#d9534f;">{row['category']}</span> | 
+                        📅 {row['date']} | 🏢 {row['media']}
+                    </div>
+                    <a href="{link_url}" target="_blank" class="news-title">{row['title']} <span style="font-size:0.8em">🔗</span></a>
+                    <div class="news-summary">{row['summary']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
 else:
     st.warning("条件に一致するニュースが見つかりませんでした。")
 
