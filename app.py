@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import datetime
 import time
+import difflib  # テキスト類似度判定に使用
 
 # ページ設定
 st.set_page_config(
@@ -57,8 +58,6 @@ def load_data():
                     title = item.title.text
                     
                     # --- フィルタリング強化: 他球団情報の除外 ---
-                    # タイトルに「オリックス」または「バファローズ」が含まれていない場合はスキップ
-                    # (Google Newsは関連性の低い記事も拾うことがあるため、ここで厳密に判定します)
                     if "オリックス" not in title and "バファローズ" not in title:
                         continue
 
@@ -71,11 +70,9 @@ def load_data():
                     pub_date_str = item.pubDate.text
                     description = item.description.text
                     
-                    # --- 日付処理の改善 ---
-                    # RSSの日付文字列をdatetimeオブジェクトに変換（ソート用）
+                    # --- 日付処理 ---
                     try:
                         timestamp = pd.to_datetime(pub_date_str)
-                        # タイムゾーンを日本時間に変換（Google NewsはGMTの場合が多い）
                         if timestamp.tzinfo is not None:
                             timestamp = timestamp.tz_convert('Asia/Tokyo')
                         display_date = timestamp.strftime('%Y-%m-%d %H:%M')
@@ -87,7 +84,6 @@ def load_data():
                     summary_soup = BeautifulSoup(description, "html.parser")
                     summary_text = summary_soup.get_text()[:100] + "..." if summary_soup.get_text() else "詳細はありません"
 
-                    # ニュース提供元抽出
                     source = "News"
                     clean_title = title
                     if " - " in title:
@@ -98,8 +94,8 @@ def load_data():
                     category = assign_category(clean_title + summary_text)
 
                     all_news_list.append({
-                        "timestamp": timestamp,   # ソート用のdatetimeオブジェクト
-                        "date": display_date,     # 表示用の文字列
+                        "timestamp": timestamp,
+                        "date": display_date,
                         "category": category,
                         "media": source,
                         "title": clean_title,
@@ -121,8 +117,30 @@ def load_data():
     df = pd.DataFrame(all_news_list)
     
     # --- 時系列ソート ---
-    # timestampカラムを使って新しい順（降順）にソート
+    # まず新しい順に並べる（これで重複除去時に「新しい記事」が優先して残るようになる）
     df = df.sort_values("timestamp", ascending=False).reset_index(drop=True)
+    
+    # --- 類似記事の削除（重複排除） ---
+    # タイトル同士の類似度を計算し、似ている記事があれば古い方を削除する
+    unique_indices = []
+    titles = df["title"].tolist()
+    
+    for i in range(len(titles)):
+        is_duplicate = False
+        # 既にリストに追加された（＝より新しい）記事と比較
+        for j in unique_indices:
+            # SequenceMatcherで類似度（0.0〜1.0）を計算
+            # 閾値0.6: 記事タイトルが6割以上一致していれば「同じ話題」とみなす
+            similarity = difflib.SequenceMatcher(None, titles[i], titles[j]).ratio()
+            
+            if similarity > 0.6: 
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            unique_indices.append(i)
+    
+    df = df.iloc[unique_indices].reset_index(drop=True)
         
     return df
 
