@@ -17,30 +17,63 @@ st.set_page_config(
 st.markdown("""
     <style>
     .news-card {
-        padding: 1.5rem;
-        border-radius: 10px;
+        padding: 1.2rem;
+        border-radius: 8px;
         border: 1px solid #e0e0e0;
-        margin-bottom: 1rem;
+        margin-bottom: 0.8rem;
         background-color: #ffffff;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        transition: box-shadow 0.2s;
+    }
+    .news-card:hover {
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .news-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 0.5rem;
+    }
+    .news-category {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        color: white;
+        background-color: #1f77b4;
+        margin-right: 0.5rem;
     }
     .news-title {
-        font-size: 1.2rem;
+        font-size: 1.15rem;
         font-weight: bold;
-        color: #1f77b4;
-        margin-bottom: 0.5rem;
+        color: #333;
         text-decoration: none;
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+    .news-title:hover {
+        color: #1f77b4;
+        text-decoration: underline;
     }
     .news-meta {
-        font-size: 0.85rem;
-        color: #666;
-        margin-bottom: 0.5rem;
+        font-size: 0.8rem;
+        color: #777;
     }
     .news-summary {
-        font-size: 0.95rem;
-        color: #333;
-        line-height: 1.5;
+        font-size: 0.9rem;
+        color: #444;
+        line-height: 1.6;
+        margin-top: 0.5rem;
     }
+    
+    /* カテゴリ別の色定義 */
+    .cat-contract { background-color: #d32f2f; } /* 赤 */
+    .cat-injury { background-color: #f57c00; }   /* オレンジ */
+    .cat-game { background-color: #388e3c; }     /* 緑 */
+    .cat-team { background-color: #1976d2; }     /* 青 */
+    .cat-other { background-color: #757575; }    /* グレー */
+
     /* ダークモード対応 */
     @media (prefers-color-scheme: dark) {
         .news-card {
@@ -48,13 +81,16 @@ st.markdown("""
             border-color: #444;
         }
         .news-title {
+            color: #eee;
+        }
+        .news-title:hover {
             color: #64b5f6;
         }
         .news-meta {
             color: #aaa;
         }
         .news-summary {
-            color: #eee;
+            color: #ccc;
         }
     }
     </style>
@@ -114,21 +150,15 @@ def load_data():
                     pub_date_str = item.pubDate.text
                     description = item.description.text
                     
-                    # --- 日付処理の修正 (UTC -> JST) ---
+                    # --- 日付処理 (UTC -> JST) ---
                     try:
-                        # まずpandasでパース (Google RSSはGMT/UTC)
                         timestamp = pd.to_datetime(pub_date_str)
-                        
-                        # タイムゾーン情報がない場合はUTCとして扱う
                         if timestamp.tzinfo is None:
                             timestamp = timestamp.tz_localize('UTC')
                         else:
-                            # 既にある場合はUTCに統一
                             timestamp = timestamp.tz_convert('UTC')
-                            
-                        # 日本時間(Asia/Tokyo)に変換
                         timestamp_jst = timestamp.tz_convert('Asia/Tokyo')
-                        display_date = timestamp_jst.strftime('%m/%d %H:%M') # 月/日 時:分
+                        display_date = timestamp_jst.strftime('%m/%d %H:%M')
                     except:
                         timestamp_jst = pd.Timestamp.now(tz='Asia/Tokyo')
                         display_date = pub_date_str
@@ -231,37 +261,26 @@ st.markdown("---")
 
 if not filtered_df.empty:
     for index, row in filtered_df.iterrows():
-        # カテゴリに応じたアイコン
-        icon = "📰"
-        if row['category'] == "契約・移籍": icon = "💰"
-        elif row['category'] == "怪我・調整": icon = "🏥"
-        elif row['category'] == "球団・イベント": icon = "🏟️"
-        elif row['category'] == "試合・結果": icon = "⚾"
+        # カテゴリに応じたCSSクラスを決定
+        cat_class = "cat-other"
+        if row['category'] == "契約・移籍": cat_class = "cat-contract"
+        elif row['category'] == "怪我・調整": cat_class = "cat-injury"
+        elif row['category'] == "球団・イベント": cat_class = "cat-team"
+        elif row['category'] == "試合・結果": cat_class = "cat-game"
 
-        # URLリンク
         link_url = row['link']
         
-        # カードレイアウトの表示 (HTML + CSS)
-        # リンクをクリック可能なタイトルとして表示
-        
-        with st.container():
-            col1, col2 = st.columns([1, 15])
-            
-            with col1:
-                st.markdown(f"<div style='font-size: 2rem; text-align: center;'>{icon}</div>", unsafe_allow_html=True)
-            
-            with col2:
-                # 記事カードのHTML生成
-                st.markdown(f"""
-                <div class="news-card">
-                    <div class="news-meta">
-                        <span style="font-weight:bold; color:#d9534f;">{row['category']}</span> | 
-                        📅 {row['date']} | 🏢 {row['media']}
-                    </div>
-                    <a href="{link_url}" target="_blank" class="news-title">{row['title']} <span style="font-size:0.8em">🔗</span></a>
-                    <div class="news-summary">{row['summary']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+        # アイコンを削除し、テキスト中心のシンプルなカードを表示
+        st.markdown(f"""
+        <div class="news-card">
+            <div class="news-header">
+                <span class="news-category {cat_class}">{row['category']}</span>
+                <span class="news-meta">📅 {row['date']} | 🏢 {row['media']}</span>
+            </div>
+            <a href="{link_url}" target="_blank" class="news-title">{row['title']}</a>
+            <div class="news-summary">{row['summary']}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 else:
     st.warning("条件に一致するニュースが見つかりませんでした。")
