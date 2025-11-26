@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import datetime
 
 # ページ設定
 st.set_page_config(
@@ -8,80 +11,134 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 1. データ準備（本来はスクレイピングやAPIで取得したデータを読み込みます） ---
+# --- 1. データ取得関数 (Google News RSSから取得) ---
+@st.cache_data(ttl=1800)  # 30分間キャッシュしてアクセス負荷を軽減
 def load_data():
-    # 先ほどのニュース要約をデータフレーム化
-    data = [
-        {"date": "2025-11-26", "category": "契約更改", "title": "山崎颯一郎 投手", "summary": "15%ダウンの4,500万円で更改。来季は「7、8、9回」の勝ちパターン復帰を目指す。", "tags": ["投手", "減額"]},
-        {"date": "2025-11-26", "category": "契約更改", "title": "東 晃平 投手", "summary": "500万円ダウンの1,900万円で更改。怪我の影響を反省し、年間を通した活躍を誓う。", "tags": ["投手", "減額"]},
-        {"date": "2025-11-25", "category": "契約更改", "title": "山下舜平大 投手", "summary": "600万円ダウンの3,000万円で更改。腰の怪我での出遅れを取り戻すべく来季へ意欲。", "tags": ["投手", "減額"]},
-        {"date": "2025-11-24", "category": "球団情報", "title": "新ロゴ・ユニフォーム発表", "summary": "2026年に向けプライマリーマークを一新。ネイビーとゴールドを基調とした洗練されたデザインへ。", "tags": ["ユニフォーム", "リブランディング"]},
-        {"date": "2025-11-23", "category": "新戦力", "title": "新外国人2選手獲得", "summary": "ジョーダン・ディアス内野手、エドワード・オリバレス外野手を獲得し、打線強化を図る。", "tags": ["補強", "外国人選手"]},
-        {"date": "2025-11-22", "category": "ビジネス", "title": "ポンタ契約更新", "summary": "ロイヤリティ マーケティング社とのスポンサー契約を更新。来季はバファローズ☆ポンタ10周年。", "tags": ["スポンサー", "ポンタ"]},
-    ]
-    return pd.DataFrame(data)
+    # Google News RSS検索 (キーワード: オリックス バファローズ)
+    # hl=ja&gl=JP&ceid=JP:ja で日本のニュースを指定
+    url = "https://news.google.com/rss/search?q=オリックス+バファローズ&hl=ja&gl=JP&ceid=JP:ja"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        # XMLとしてパース (features="xml" を使用するには lxml が必要)
+        # lxmlがない環境の場合は "html.parser" でも代用可能ですが、xml推奨
+        soup = BeautifulSoup(response.content, "xml")
+        items = soup.find_all("item")
+        
+        news_list = []
+        for item in items:
+            title = item.title.text
+            link = item.link.text
+            pub_date_str = item.pubDate.text
+            description = item.description.text
+            
+            # 日付のフォーマット変換
+            # RSSの日付形式 (例: Wed, 26 Nov 2025 ...) を扱いやすく変換
+            try:
+                pub_date = pd.to_datetime(pub_date_str).strftime('%Y-%m-%d %H:%M')
+            except:
+                pub_date = pub_date_str
+
+            # descriptionにはHTMLが含まれる場合があるため、テキストのみ抽出して要約を作成
+            summary_soup = BeautifulSoup(description, "html.parser")
+            summary_text = summary_soup.get_text()[:80] + "..." if summary_soup.get_text() else "詳細はありません"
+
+            # ニュース提供元をタイトルから抽出 (Google Newsの形式: "タイトル - 提供元")
+            source = "News"
+            if " - " in title:
+                parts = title.rsplit(" - ", 1)
+                title = parts[0] # 記事タイトル
+                source = parts[1] # 提供元 (例: Yahoo!ニュース, 日刊スポーツ)
+
+            news_list.append({
+                "date": pub_date,
+                "category": source, # 提供元をカテゴリとして利用
+                "title": title,
+                "summary": summary_text,
+                "link": link,
+                "tags": ["Web記事"]
+            })
+            
+        return pd.DataFrame(news_list)
+
+    except Exception as e:
+        st.error(f"ニュースの取得に失敗しました: {e}")
+        # エラー時のダミーデータ
+        return pd.DataFrame([
+            {"date": "-", "category": "Error", "title": "データ取得エラー", "summary": "再読み込みしてください。", "link": "#", "tags": []}
+        ])
 
 df = load_data()
 
-# --- 2. サイドバー（フィルタリング機能） ---
+# --- 2. サイドバー (フィルタリング) ---
 st.sidebar.title("🔍 検索フィルター")
 
-# カテゴリ選択
-categories = df["category"].unique()
-selected_categories = st.sidebar.multiselect(
-    "カテゴリで絞り込み",
-    categories,
-    default=categories
-)
-
-# ワード検索
-search_query = st.sidebar.text_input("キーワード検索（例: 投手, ポンタ）")
-
-# フィルタリング実行
-filtered_df = df[df["category"].isin(selected_categories)]
-
-if search_query:
-    # タイトルか要約にキーワードが含まれているものを抽出
-    filtered_df = filtered_df[
-        filtered_df["title"].str.contains(search_query) | 
-        filtered_df["summary"].str.contains(search_query)
-    ]
+if not df.empty:
+    # ニュース提供元（メディア）でフィルタリング
+    categories = df["category"].unique()
+    selected_categories = st.sidebar.multiselect(
+        "メディアで絞り込み",
+        categories,
+        default=categories
+    )
+    
+    # キーワード検索
+    search_query = st.sidebar.text_input("キーワード検索 (例: 契約更改)")
+    
+    # フィルタリング実行
+    filtered_df = df[df["category"].isin(selected_categories)]
+    
+    if search_query:
+        filtered_df = filtered_df[
+            filtered_df["title"].str.contains(search_query, case=False) | 
+            filtered_df["summary"].str.contains(search_query, case=False)
+        ]
+else:
+    filtered_df = df
 
 # --- 3. メイン画面 ---
-st.title("⚾ オリックス・バファローズ News Aggregator")
-st.markdown(f"最新のニュース **{len(filtered_df)}** 件を表示しています。")
+st.title("⚾ オリックス・バファローズ 最新ニュース")
+st.caption("Google News RSSより自動収集")
 
-# 表示モードの切り替え
+# 更新ボタン (キャッシュをクリアして再取得)
+if st.button("ニュースを更新"):
+    load_data.clear()
+    st.rerun()
+
+st.markdown(f"最新記事: **{len(filtered_df)}** 件")
+
+# 表示モード切り替え
 view_mode = st.radio("表示形式:", ["カード表示", "データテーブル"], horizontal=True)
-
 st.divider()
 
-if view_mode == "カード表示":
-    # ニュースをカード（Expander）で表示
-    for index, row in filtered_df.iterrows():
-        # カテゴリごとに色を変えるバッジのような表示
-        cat_color = "blue" if row['category'] == "契約更改" else "green" if row['category'] == "球団情報" else "orange"
-        
-        with st.expander(f"【{row['category']}】 {row['title']} ({row['date']})", expanded=True):
-            st.markdown(f"### {row['title']}")
-            st.info(row['summary'])
-            st.caption(f"タグ: {', '.join(row['tags'])}")
-            
-elif view_mode == "データテーブル":
-    # 一覧性が高いテーブル表示
-    st.dataframe(
-        filtered_df,
-        column_config={
-            "date": "日付",
-            "category": "カテゴリ",
-            "title": "見出し",
-            "summary": "ニュース要約",
-            "tags": "タグ"
-        },
-        use_container_width=True,
-        hide_index=True
-    )
+if not filtered_df.empty:
+    if view_mode == "カード表示":
+        for index, row in filtered_df.iterrows():
+            # 提供元を見出しに含めてExpanderを作成
+            with st.expander(f"【{row['category']}】 {row['title']}", expanded=True):
+                st.caption(f"📅 {row['date']}")
+                st.write(row['summary'])
+                # リンクボタンで記事へ飛ぶ
+                st.link_button("記事を読む 🔗", row['link'])
+                
+    elif view_mode == "データテーブル":
+        st.dataframe(
+            filtered_df,
+            column_config={
+                "date": "日時",
+                "category": "メディア",
+                "title": "見出し",
+                "summary": "要約",
+                "link": st.column_config.LinkColumn("リンク", display_text="記事を開く")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+else:
+    st.warning("条件に一致するニュースが見つかりませんでした。")
 
 # --- 4. フッター ---
 st.markdown("---")
-st.caption("Data Source: News Aggregation (Demo)")
+st.caption("Powered by Google News RSS")
