@@ -50,7 +50,7 @@ st.markdown("""
         color: #333;
         text-decoration: none;
         display: block;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.2rem; /* 余白調整 */
     }
     .news-title:hover {
         color: #1f77b4;
@@ -59,12 +59,6 @@ st.markdown("""
     .news-meta {
         font-size: 0.8rem;
         color: #777;
-    }
-    .news-summary {
-        font-size: 0.9rem;
-        color: #444;
-        line-height: 1.6;
-        margin-top: 0.5rem;
     }
     
     /* カテゴリ別の色定義 */
@@ -88,9 +82,6 @@ st.markdown("""
         }
         .news-meta {
             color: #aaa;
-        }
-        .news-summary {
-            color: #ccc;
         }
         .cat-award { color: #000 !important; }
     }
@@ -325,6 +316,7 @@ if not filtered_df.empty:
 
         link_url = row['link']
         
+        # summaryを表示から削除
         st.markdown(f"""
         <div class="news-card">
             <div class="news-header">
@@ -332,7 +324,6 @@ if not filtered_df.empty:
                 <span class="news-meta">📅 {row['date']} | 🏢 {row['media']}</span>
             </div>
             <a href="{link_url}" target="_blank" class="news-title">{row['title']}</a>
-            <div class="news-summary">{row['summary']}</div>
         </div>
         """, unsafe_allow_html=True)
 
