@@ -142,21 +142,44 @@ def categorize_batch_with_ai(news_df, api_key):
     for i in range(0, len(titles_data), BATCH_SIZE):
         chunk = titles_data[i:i + BATCH_SIZE]
         
-        # プロンプト作成
+        # プロンプト作成 (定義を厳格化)
         prompt = f"""
         あなたはプロ野球ニュースの編集者です。
         以下のJSON形式のニュースタイトルリストを読み、それぞれの記事を最も適切なカテゴリに分類してください。
+        判断に迷う場合は無理に分類せず「その他」を選択してください。
         
-        【カテゴリ定義】
-        - 契約更改: 契約更新、年俸提示、サイン、現状維持、アップ、ダウン
-        - 移籍・退団: FA、トレード、新外国人獲得、戦力外通告、退団、自由契約、ポスティング
-        - ドラフト・新人: ドラフト指名、入団会見、新人選手紹介
-        - 怪我・調整: 手術、リハビリ、怪我、離脱、登録抹消、コンディション不良
-        - キャンプ・練習: 春季/秋季キャンプ、自主トレ、ブルペン入り、練習試合
-        - タイトル受賞: ベストナイン、ゴールデングラブ、MVP、月間MVP、表彰
-        - 試合・結果: 勝敗、試合結果、スコア
-        - 球団・イベント: ユニフォーム、ロゴ、ファン感謝デー、人事、コーチ就任、グッズ
-        - その他: 上記に当てはまらないもの
+        【カテゴリ定義と判定基準】
+        1. 契約更改
+           - 対象: 既存選手の来季契約、年俸交渉、サイン、現状維持、アップ、ダウン。
+           - 除外: FA宣言、退団、移籍、新外国人獲得はここには含めない。
+        
+        2. 移籍・退団
+           - 対象: FA権行使、他球団への移籍、新外国人獲得、戦力外通告、自由契約、退団、ポスティングシステム。
+           - 除外: ドラフト指名はここには含めない。
+        
+        3. ドラフト・新人
+           - 対象: ドラフト会議での指名、指名挨拶、仮契約、新入団選手発表会見、ルーキーの紹介。
+           - 除外: 新外国人選手は「移籍・退団」へ。
+        
+        4. 怪我・調整
+           - 対象: 手術、リハビリ、怪我の診断結果、登録抹消（怪我理由）、コンディション不良、別メニュー調整。
+        
+        5. キャンプ・練習
+           - 対象: 春季/秋季キャンプ、自主トレ公開、ブルペン入り、打撃練習、練習試合、紅白戦。
+           - 除外: 公式戦の試合結果は含めない。
+        
+        6. タイトル受賞
+           - 対象: ベストナイン、ゴールデングラブ、MVP、新人王、月間MVP、各種表彰。
+        
+        7. 試合・結果
+           - 対象: 公式戦、交流戦、CS、日本シリーズの勝敗・スコア・試合経過。
+           - 除外: 練習試合、紅白戦は「キャンプ・練習」へ。
+        
+        8. 球団・イベント
+           - 対象: ユニフォーム発表、ロゴ変更、ファン感謝デー、チケット販売、コーチ就任・退任などの人事、マスコット、グッズ。
+        
+        9. その他
+           - 上記のいずれにも明確に当てはまらないもの。
         
         【入力データ】
         {json.dumps(chunk, ensure_ascii=False)}
@@ -313,11 +336,8 @@ if 'news_df' not in st.session_state:
 # サイドバー設定
 st.sidebar.title("🔍 設定・検索")
 
-# APIキー設定
-with st.sidebar.expander("🤖 AIカテゴリ設定 (Gemini API)"):
-    # デフォルト値を設定して隠す
-    DEFAULT_API_KEY = "AIzaSyCc-6JTVoHwkyoT071WBVVXd_F_6I5yA84"
-    api_key = st.text_input("API Key", value=DEFAULT_API_KEY, type="password", help="カテゴリ精度向上のために使用します")
+# APIキーを内部で保持（隠蔽）
+API_KEY = "AIzaSyCc-6JTVoHwkyoT071WBVVXd_F_6I5yA84"
     
 sort_order = st.sidebar.radio("並び順", ["新しい順", "古い順"], horizontal=True)
 
@@ -330,17 +350,17 @@ with col1:
         st.rerun()
 
 with col2:
-    if api_key:
+    if HAS_GENAI and API_KEY:
         if st.button("✨ AIでカテゴリ細分化"):
             if not st.session_state.news_df.empty:
                 with st.spinner("AIがタイトルを分析してカテゴリを振り分けています..."):
                     # データフレームごと渡して更新
-                    updated_df = categorize_batch_with_ai(st.session_state.news_df.copy(), api_key)
+                    updated_df = categorize_batch_with_ai(st.session_state.news_df.copy(), API_KEY)
                     st.session_state.news_df = updated_df
                     st.success("カテゴリの細分化が完了しました！")
                     st.rerun()
-    elif HAS_GENAI:
-        st.caption("👈 APIキーを設定するとAI分類が使えます")
+    elif not HAS_GENAI:
+        st.error("google-generativeai ライブラリが必要です")
 
 # データフレーム取得
 df = st.session_state.news_df.copy()
