@@ -69,6 +69,7 @@ st.markdown("""
     
     /* カテゴリ別の色定義 */
     .cat-contract { background-color: #d32f2f; } /* 赤: 契約 */
+    .cat-award { background-color: #fbc02d; color: #333 !important; } /* 金: タイトル受賞 */
     .cat-camp { background-color: #388e3c; }     /* 緑: キャンプ/練習 */
     .cat-event { background-color: #1976d2; }    /* 青: 球団/イベント */
     .cat-injury { background-color: #f57c00; }   /* オレンジ: 怪我 */
@@ -91,6 +92,7 @@ st.markdown("""
         .news-summary {
             color: #ccc;
         }
+        .cat-award { color: #000 !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -106,9 +108,13 @@ def assign_category(text):
     # カテゴリ定義 (上にあるものほど優先度が高い)
     categories = [
         {
+            "name": "タイトル受賞",
+            "keywords": ["ベストナイン", "ゴールデングラブ", "表彰", "受賞", "MVP", "新人王", "タイトル", "沢村賞", "月間MVP"]
+        },
+        {
             "name": "契約・移籍",
             # 金額関連のキーワードを追加（万円, 億円, 現状維持, 増, 減, アップ, ダウン）
-            "keywords": ["契約更改", "更改", "移籍", "FA", "トレード", "新加入", "退団", "戦力外", "ドラフト", "獲得", "ポスティング", "育成", "支配下", "年俸", "人的補償", "入団", "サイン", "残留", "万円", "億円", "現状維持", "アップ", "ダウン", "契約合意"]
+            "keywords": ["契約更改", "更改", "移籍", "FA", "トレード", "新加入", "退団", "戦力外", "ドラフト", "獲得", "ポスティング", "育成", "支配下", "年俸", "人的補償", "入団", "サイン", "残留", "万円", "億円", "現状維持", "アップ", "ダウン"]
         },
         {
             "name": "怪我・調整",
@@ -120,7 +126,7 @@ def assign_category(text):
         },
         {
             "name": "球団・イベント",
-            "keywords": ["ファン感", "イベント", "ユニフォーム", "ロゴ", "チケット", "グッズ", "スポンサー", "マスコット", "人事", "コーチ", "監督", "ベストナイン", "ゴールデングラブ", "表彰", "パレード"]
+            "keywords": ["ファン感", "イベント", "ユニフォーム", "ロゴ", "チケット", "グッズ", "スポンサー", "マスコット", "人事", "コーチ", "監督", "パレード"]
         }
     ]
     
@@ -312,6 +318,7 @@ if not filtered_df.empty:
         # カテゴリに応じたCSSクラス
         cat_class = "cat-other"
         if row['category'] == "契約・移籍": cat_class = "cat-contract"
+        elif row['category'] == "タイトル受賞": cat_class = "cat-award"
         elif row['category'] == "怪我・調整": cat_class = "cat-injury"
         elif row['category'] == "球団・イベント": cat_class = "cat-event"
         elif row['category'] == "キャンプ・練習": cat_class = "cat-camp"
