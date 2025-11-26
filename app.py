@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import datetime
 import time
 import difflib
+import re
 
 # ページ設定
 st.set_page_config(
@@ -13,7 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- カスタムCSS: カード表示のデザイン調整 ---
+# --- カスタムCSS: デザイン調整 ---
 st.markdown("""
     <style>
     .news-card {
@@ -41,7 +42,6 @@ st.markdown("""
         font-size: 0.8rem;
         font-weight: bold;
         color: white;
-        background-color: #1f77b4;
         margin-right: 0.5rem;
     }
     .news-title {
@@ -68,13 +68,12 @@ st.markdown("""
     }
     
     /* カテゴリ別の色定義 */
-    .cat-contract { background-color: #d32f2f; } /* 赤 */
-    .cat-injury { background-color: #f57c00; }   /* オレンジ */
-    .cat-game { background-color: #388e3c; }     /* 緑 */
-    .cat-team { background-color: #1976d2; }     /* 青 */
+    .cat-contract { background-color: #d32f2f; } /* 赤: 契約 */
+    .cat-camp { background-color: #388e3c; }     /* 緑: キャンプ/練習 */
+    .cat-event { background-color: #1976d2; }    /* 青: 球団/イベント */
+    .cat-injury { background-color: #f57c00; }   /* オレンジ: 怪我 */
     .cat-other { background-color: #757575; }    /* グレー */
 
-    /* ダークモード対応 */
     @media (prefers-color-scheme: dark) {
         .news-card {
             background-color: #262730;
@@ -96,30 +95,69 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- ヘルパー関数: キーワードからカテゴリを判定 ---
+# --- ヘルパー関数: カテゴリ判定の精度向上 ---
 def assign_category(text):
+    """
+    ニュースのタイトル・本文からカテゴリを判定する。
+    優先順位を設定して、より正確に分類する。
+    """
     text = text.replace(" ", "")
-    keywords = {
-        "契約・移籍": ["契約", "更改", "移籍", "FA", "トレード", "新加入", "退団", "戦力外", "ドラフト", "獲得", "ポスティング", "育成", "支配下", "年俸", "人的補償"],
-        "怪我・調整": ["怪我", "故障", "手術", "離脱", "復帰", "調整", "抹消", "登録", "コンディション", "痛", "違和感", "リハビリ"],
-        "球団・イベント": ["ロゴ", "ユニフォーム", "イベント", "ファン", "チケット", "グッズ", "スポンサー", "マスコット", "キャンプ", "人事", "コーチ", "監督"],
-        "試合・結果": ["試合", "勝", "負", "本塁打", "安打", "登板", "先発", "サヨナラ", "完封", "打率", "防御率", "スコア", "速報", "紅白戦"]
-    }
     
-    for category, words in keywords.items():
-        if any(word in text for word in words):
-            return category
+    # カテゴリ定義 (上にあるものほど優先度が高い)
+    categories = [
+        {
+            "name": "契約・移籍",
+            "keywords": ["契約更改", "更改", "移籍", "FA", "トレード", "新加入", "退団", "戦力外", "ドラフト", "獲得", "ポスティング", "育成", "支配下", "年俸", "人的補償", "入団", "サイン", "残留"]
+        },
+        {
+            "name": "怪我・調整",
+            "keywords": ["怪我", "故障", "手術", "離脱", "全治", "リハビリ", "痛", "違和感", "コンディション", "病院", "検査"]
+        },
+        {
+            "name": "キャンプ・練習", # オフシーズン向けに変更
+            "keywords": ["キャンプ", "自主トレ", "練習", "ブルペン", "投げ込み", "打撃", "ノック", "紅白戦", "フェニックス", "秋季", "春季", "始動"]
+        },
+        {
+            "name": "球団・イベント",
+            "keywords": ["ファン感", "イベント", "ユニフォーム", "ロゴ", "チケット", "グッズ", "スポンサー", "マスコット", "人事", "コーチ", "監督", "ベストナイン", "ゴールデングラブ", "表彰", "パレード"]
+        }
+    ]
+    
+    for cat in categories:
+        if any(word in text for word in cat["keywords"]):
+            return cat["name"]
+            
     return "その他ニュース"
 
-# --- 1. データ取得関数 (Google News RSSから取得) ---
+def clean_summary(text):
+    """
+    RSSのdescriptionから余計なHTMLタグやゴミ文字を除去する
+    """
+    # HTMLタグの除去
+    soup = BeautifulSoup(text, "html.parser")
+    text = soup.get_text()
+    
+    # 連続する空白を1つに
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Google News特有の「記事を読む」などのリンク文字を削除
+    text = text.replace("記事を読む", "").replace("Full coverage", "")
+    
+    # 文末の調整
+    if len(text) > 100:
+        text = text[:100] + "..."
+        
+    return text
+
+# --- 1. データ取得関数 ---
 @st.cache_data(ttl=1800)
 def load_data():
     search_queries = [
         "オリックス+バファローズ",
         "オリックス+契約更改",
         "オリックス+移籍",
-        "オリックス+新外国人",
-        "オリックス+ファーム"
+        "オリックス+ドラフト",
+        "オリックス+キャンプ"
     ]
     
     all_news_list = []
@@ -139,8 +177,11 @@ def load_data():
                 for item in items:
                     title = item.title.text
                     
-                    if "オリックス" not in title and "バファローズ" not in title:
-                        continue
+                    # フィルタリング
+                    if "オリックス" not in title and "バファローズ" not in title and "中嶋" not in title and "岸田" not in title:
+                         # 監督名などが含まれていれば通す、それ以外は厳しめに弾く
+                         if "Bs" not in title: 
+                            continue
 
                     link = item.link.text
                     if link in seen_links:
@@ -150,7 +191,7 @@ def load_data():
                     pub_date_str = item.pubDate.text
                     description = item.description.text
                     
-                    # --- 日付処理 (UTC -> JST) ---
+                    # 日付処理 (JST変換)
                     try:
                         timestamp = pd.to_datetime(pub_date_str)
                         if timestamp.tzinfo is None:
@@ -163,9 +204,12 @@ def load_data():
                         timestamp_jst = pd.Timestamp.now(tz='Asia/Tokyo')
                         display_date = pub_date_str
 
-                    summary_soup = BeautifulSoup(description, "html.parser")
-                    summary_text = summary_soup.get_text()[:120] + "..." if summary_soup.get_text() else "詳細はありません"
+                    # 要約のクリーニング
+                    summary_text = clean_summary(description)
+                    if not summary_text:
+                        summary_text = "詳細はありません"
 
+                    # 媒体名の抽出
                     source = "News"
                     clean_title = title
                     if " - " in title:
@@ -173,6 +217,7 @@ def load_data():
                         clean_title = parts[0]
                         source = parts[1]
 
+                    # カテゴリ判定 (タイトルと要約の両方を使って判定)
                     category = assign_category(clean_title + summary_text)
 
                     all_news_list.append({
@@ -199,7 +244,7 @@ def load_data():
     df = pd.DataFrame(all_news_list)
     df = df.sort_values("timestamp", ascending=False).reset_index(drop=True)
     
-    # 重複排除
+    # 重複排除 (タイトル類似度)
     unique_indices = []
     titles = df["title"].tolist()
     for i in range(len(titles)):
@@ -220,6 +265,7 @@ df = load_data()
 
 # --- 2. サイドバー ---
 st.sidebar.title("🔍 検索フィルター")
+
 sort_order = st.sidebar.radio("並び順", ["新しい順", "古い順"], horizontal=True)
 
 if sort_order == "古い順":
@@ -229,6 +275,7 @@ else:
 
 if not df.empty:
     categories = sorted(df["category"].unique())
+    # "その他ニュース"を最後に
     if "その他ニュース" in categories:
         categories.remove("その他ニュース")
         categories.append("その他ニュース")
@@ -251,7 +298,7 @@ else:
 
 # --- 3. メイン画面 ---
 st.title("⚾ オリックス・バファローズ 最新ニュース")
-st.caption("最新のニュースを自動収集・要約して表示しています")
+st.caption("最新のニュースを自動収集して表示しています")
 
 if st.button("🔄 ニュースを更新"):
     load_data.clear()
@@ -261,16 +308,15 @@ st.markdown("---")
 
 if not filtered_df.empty:
     for index, row in filtered_df.iterrows():
-        # カテゴリに応じたCSSクラスを決定
+        # カテゴリに応じたCSSクラス
         cat_class = "cat-other"
         if row['category'] == "契約・移籍": cat_class = "cat-contract"
         elif row['category'] == "怪我・調整": cat_class = "cat-injury"
-        elif row['category'] == "球団・イベント": cat_class = "cat-team"
-        elif row['category'] == "試合・結果": cat_class = "cat-game"
+        elif row['category'] == "球団・イベント": cat_class = "cat-event"
+        elif row['category'] == "キャンプ・練習": cat_class = "cat-camp"
 
         link_url = row['link']
         
-        # アイコンを削除し、テキスト中心のシンプルなカードを表示
         st.markdown(f"""
         <div class="news-card">
             <div class="news-header">
