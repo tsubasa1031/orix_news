@@ -262,7 +262,7 @@ def load_data():
     
     with st.spinner('ニュースを収集中...'):
         for query in search_queries:
-            # URLエンコーディング対策
+            # URL生成部分を修正
             url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){query}&hl=ja&gl=JP&ceid=JP:ja"
             
             try:
